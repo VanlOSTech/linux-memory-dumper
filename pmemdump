@@ -1,0 +1,96 @@
+#!/bin/sh
+# :mode=shellscript:
+
+##
+## Linux memory dumping program for systems that don't have /dev/mem.
+## Organizes results by pid and program name.
+## Written by and copyright (C) 2013 Dan Fuhry <dan@fuhry.com>. MIT license.
+##
+
+type emulate 2>/dev/null && emulate sh -c
+
+. "`dirname $0`/functions"
+
+pmemdump_usage()
+{
+    cat <<EOF >&2 
+Linux memory dumping utility - http://github.com/fuhry/linux-memory-dumper
+Written by Dan Fuhry <dan@fuhry.com>
+
+Usage: $0 [arguments]
+
+Possible options:
+  -o/--outdir        Set output directory; defaults to ./`hostname`-`date +%Y%m%d` (dynamic)
+  -p/--pid           Specify the process id to dump it's memory.
+
+EOF
+
+    exit 1
+
+}
+
+pmemdump_arse_args()
+{
+    outdir="./`hostname`-`date +%Y%m%d`"
+    while test -n "$1" ; do
+        case "$1" in
+            -o|--outdir)
+                shift
+                outdir="$1"
+                ;;
+            -p|--pid)
+                shift
+                pid="$1"
+                ;;
+            *)
+                pmemdump_usage
+                ;;
+        esac
+
+        shift
+    done
+}
+
+pmemdump_arse_args $@
+
+check_environment
+
+echo "Process ${pid} to dump"
+
+# loop through all found processes and dump
+i=0
+successful=0
+echo -n "Dumping process $i of ${#pid[@]}..."
+if ! test -d "/proc/$pid" ; then
+	warn "pid $pid has died"
+	continue
+fi
+mkdir -p "$outdir/by-pid/$pid"
+ps u "$pid" > "$outdir/by-pid/$pid/ps-u"
+if dump_process "$pid" "$outdir/by-pid/$pid"; then
+	successful=$[successful+1]
+else
+	rm -rf "$outdir/by-pid/$pid"
+fi
+echo -en "\r"
+
+# sort by exe and by user
+set +e
+test -d "$outdir/by-pid/$pid" || continue
+
+exe="`readlink -f /proc/$pid/exe`"
+if test -n "$exe"; then
+    exe="`basename $exe`"
+    if [ -n "$exe" ]; then
+        test -d "$outdir/by-exe/$exe" || mkdir -p "$outdir/by-exe/$exe"
+        ln -sf "../../by-pid/$pid" "$outdir/by-exe/$exe/$pid"
+    fi
+fi
+
+user="`stat -c %U /proc/$pid`"
+test -d "$outdir/by-user/$user" || mkdir -p "$outdir/by-user/$user"
+ln -sf "../../by-pid/$pid" "$outdir/by-user/$user/$pid"
+
+# clear whole line
+echo -en "\e[2K"
+echo "Process dumping completed - successfully dumped $successful of ${#pid[@]} running processes."
